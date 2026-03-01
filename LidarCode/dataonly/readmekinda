@@ -1,0 +1,4 @@
+Module1.py works as a grid, dataonly gives you;
+
+<angle from center/blue dot on Lidar>, <distance from Lidar>, <how strong the signal is>
+
