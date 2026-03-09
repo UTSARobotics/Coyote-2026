@@ -1,43 +1,54 @@
-# ArUco Marker Detection with ROS 2 Jazzy
+# ArUco Marker Detection with ROS 2 Jazzy + Intel RealSense D435I
 ### Setup Guide for Ubuntu 24.04 (Noble) — March 2026
 
 ---
 
 ## Overview
 
-This guide walks through setting up ArUco marker detection in ROS 2 Jazzy on Ubuntu 24.04. By the end you will have a working system that detects ArUco markers from a USB webcam and publishes their 3D position and orientation in real time.
+This guide walks through setting up ArUco marker detection in ROS 2 Jazzy using an Intel RealSense D435I depth camera on Ubuntu 24.04. All steps in this guide have been verified on real hardware.
+
+The D435I provides RGB, depth, infrared stereo, and IMU streams — all exposed as ROS 2 topics — giving you much more accurate 3D pose estimation than a basic USB webcam.
+
+**What you get with the D435I over a USB webcam:**
+- Accurate depth per pixel — no fake calibration file needed
+- Aligned depth-to-color frames
+- Colored point cloud
+- Infrared stereo streams (infra1 + infra2)
+- Built-in IMU — accelerometer + gyroscope (the "I" in D435I)
+- Hardware-synced streams
+- Real camera intrinsics published automatically
 
 ---
 
 ## System Requirements
 
-| Component | Required Version |
+| Component | Verified Version |
 |---|---|
 | Operating System | Ubuntu 24.04 LTS (Noble Numbat) |
-| ROS 2 Distribution | Jazzy Jalisco (NOT Humble — that requires Ubuntu 22.04) |
-| Python | 3.12 (comes with Ubuntu 24.04) |
-| Camera | USB webcam or laptop built-in camera |
-| ArUco Markers | Physical printed markers or ArUco cube |
+| ROS 2 Distribution | Jazzy Jalisco |
+| Python | 3.12 |
+| Camera | Intel RealSense D435I |
+| USB Port | **USB 3.0 or higher required** (blue port) |
+| librealsense2 | 2.56.4 |
+| RealSense ROS wrapper | 4.56.4 |
+| Camera Firmware | 5.17.0.10 |
 
-> **NOTE:** If you are on Ubuntu 24.04 and try to install `ros-humble-*` packages, they will not be found. Ubuntu 24.04 requires ROS 2 Jazzy.
+> **CRITICAL:** Always plug the D435I into a **USB 3.0 or higher (blue) port**. USB 2.x cannot sustain the bandwidth for multiple streams and will cause frame corruption and overflow errors. Confirm `Usb Type Descriptor: 3.2` in `rs-enumerate-devices` output.
 
 ---
 
 ## Step 1: Set Up ROS 2 Jazzy Repository
 
+Skip this step if you already have ROS 2 Jazzy installed.
+
 ### 1.1 Clean Up Old Repos
 
-Check for conflicting repo files (a common issue is having both `ros2.list` and `ros2.sources`):
-
 ```bash
-ls /etc/apt/sources.list.d/
-
-# Remove ALL ros2 repo files
 sudo rm -f /etc/apt/sources.list.d/ros2.list
 sudo rm -f /etc/apt/sources.list.d/ros2.sources
 ```
 
-### 1.2 Add Correct Jazzy Repository
+### 1.2 Add Jazzy Repository
 
 ```bash
 sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
@@ -50,43 +61,67 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-a
 sudo apt update
 ```
 
----
-
-## Step 2: Install ROS 2 Jazzy
+### 1.3 Install ROS 2 Core Packages
 
 ```bash
 sudo apt install ros-jazzy-desktop
 sudo apt install ros-jazzy-tf-transformations
 sudo apt install ros-jazzy-cv-bridge
 sudo apt install ros-jazzy-vision-opencv
-sudo apt install ros-jazzy-usb-cam
 sudo apt install python3-opencv python3-numpy
 ```
 
-> **NOTE:** Do NOT install `ros-jazzy-opencv-tests` — this package does not exist. The apt `python3-opencv` on Ubuntu 24.04 has a broken ArUco module — we fix this in Step 3.
+---
+
+## Step 2: Install RealSense SDK and ROS 2 Wrapper
+
+Remove the old `usb_cam` driver — the RealSense has its own ROS 2 node:
+
+```bash
+sudo apt remove ros-jazzy-usb-cam -y
+```
+
+Install librealsense2 and the ROS 2 wrapper:
+
+```bash
+sudo apt install ros-jazzy-librealsense2* -y
+sudo apt install ros-jazzy-realsense2-camera -y
+sudo apt install ros-jazzy-realsense2-description -y
+```
+
+Plug in your D435I to a USB 3.0 port, then verify the SDK sees it:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+rs-enumerate-devices
+```
+
+Confirm the output shows:
+- Your device name and serial number
+- `Usb Type Descriptor: 3.2` — if this shows 2.x, switch USB ports
+- Stream profiles for Stereo Module, RGB Camera, and Motion Module
 
 ---
 
 ## Step 3: Fix OpenCV for ArUco
 
-The system apt OpenCV 4.6 on Ubuntu 24.04 has a broken ArUco `detectMarkers` function (causes segfaults). Install OpenCV 4.10 via pip instead:
+The apt OpenCV 4.6 on Ubuntu 24.04 has a broken ArUco `detectMarkers` (causes segfaults). Install OpenCV 4.10 via pip:
 
 ```bash
-# Remove pip opencv if previously installed
 pip3 uninstall opencv-contrib-python opencv-python -y --break-system-packages 2>/dev/null
-
-# Install working version
 pip3 install opencv-contrib-python==4.10.0.84 --break-system-packages
 ```
 
-Verify the installation works:
+Verify the correct version is loading and ArUco works:
 
 ```bash
 python3 -c "
 import sys
 sys.path.insert(0, '/home/$USER/.local/lib/python3.12/site-packages')
 import cv2, numpy as np
-dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_250)
+print('OpenCV version:', cv2.__version__)
+print('OpenCV location:', cv2.__file__)
+dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
 img = np.zeros((480, 640), dtype=np.uint8)
 corners, ids, rejected = detector.detectMarkers(img)
@@ -94,15 +129,26 @@ print('ArUco OK!')
 "
 ```
 
+Expected output:
+```
+OpenCV version: 4.10.0
+OpenCV location: /home/<user>/.local/lib/python3.12/site-packages/cv2/__init__.py
+ArUco OK!
+```
+
+> **NOTE:** The version string shows `4.10.0` not `4.10.0.84` — this is normal. What matters is the location shows `.local/lib/python3.12/site-packages`, confirming it is the pip version not the broken apt one.
+
 ---
 
-## Step 4: Create ROS 2 Workspace
+## Step 4: Create ROS 2 Workspace and Clone ArUco Package
 
 ```bash
-mkdir -p ~/aruco_ws/src
-cd ~/aruco_ws/src
+mkdir -p ~/your_ws/src
+cd ~/your_ws/src
 git clone https://github.com/JMU-ROBOTICS-VIVA/ros2_aruco.git
 ```
+
+> Replace `your_ws` with your actual workspace name throughout this guide.
 
 ---
 
@@ -110,28 +156,34 @@ git clone https://github.com/JMU-ROBOTICS-VIVA/ros2_aruco.git
 
 The `ros2_aruco` package was written for an older OpenCV API. Apply the following patches:
 
-### 5.1 Fix generate marker script
+### 5.1 Verify file locations
+
+```bash
+ls ~/your_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/
+# Should show: aruco_generate_marker.py  aruco_node.py  __init__.py
+```
+
+### 5.2 Fix generate marker script
 
 ```bash
 sed -i 's/cv2.aruco.Dictionary_get/cv2.aruco.getPredefinedDictionary/g' \
-  ~/aruco_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/aruco_generate_marker.py
+  ~/your_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/aruco_generate_marker.py
 
 sed -i 's/cv2.aruco.drawMarker(dictionary, args.id, args.size, image, 1)/cv2.aruco.generateImageMarker(dictionary, args.id, args.size, image, 1)/g' \
-  ~/aruco_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/aruco_generate_marker.py
+  ~/your_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/aruco_generate_marker.py
 ```
 
-### 5.2 Patch aruco_node.py
+### 5.3 Patch aruco_node.py
 
 Run this Python script to apply all patches at once:
 
 ```bash
 python3 << 'EOF'
 import os
-filepath = os.path.expanduser('~/aruco_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/aruco_node.py')
+filepath = os.path.expanduser('~/your_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/aruco_node.py')
 with open(filepath, 'r') as f:
     content = f.read()
 
-# 1. Add sys.path fix to load pip OpenCV instead of broken apt OpenCV
 old_import = "import rclpy\nimport rclpy.node"
 new_import = (
     "import sys\n"
@@ -139,11 +191,8 @@ new_import = (
     "import rclpy\nimport rclpy.node"
 )
 content = content.replace(old_import, new_import)
-
-# 2. Fix Dictionary_get -> getPredefinedDictionary
 content = content.replace('cv2.aruco.Dictionary_get', 'cv2.aruco.getPredefinedDictionary')
 
-# 3. Use new ArucoDetector class
 old_init = (
     "        self.aruco_dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)\n"
     "        self.aruco_parameters = cv2.aruco.DetectorParameters()\n"
@@ -157,7 +206,6 @@ new_init = (
 )
 content = content.replace(old_init, new_init)
 
-# 4. Replace detectMarkers with new API
 old_detect = (
     "        corners, marker_ids, rejected = cv2.aruco.detectMarkers(\n"
     "            cv_image, self.aruco_dictionary, parameters=self.aruco_parameters\n"
@@ -187,174 +235,335 @@ print("Patches applied!")
 EOF
 ```
 
+### 5.4 Verify patches landed correctly
+
+```bash
+grep -n "import sys\|aruco_detector\|detectMarkers" \
+  ~/your_ws/src/ros2_aruco/ros2_aruco/ros2_aruco/aruco_node.py
+```
+
+Expected output (line numbers may vary):
+```
+32: import sys
+154: self.aruco_detector = cv2.aruco.ArucoDetector(...)
+186: corners, marker_ids, rejected = self.aruco_detector.detectMarkers(cv_image)
+```
+
+> **NOTE:** The `sys.path.insert` line won't appear in `head -5` because the file starts with a docstring. Always use `grep` as shown above to confirm patches landed correctly.
+
 ---
 
 ## Step 6: Build the Workspace
 
 ```bash
-cd ~/aruco_ws
+cd ~/your_ws
 colcon build --symlink-install
 ```
 
-> **NOTE:** Ignore warnings about `pytest-repeat egg-info` — these are harmless.
+Expected output:
+```
+Summary: 2 packages finished [~16s]
+  1 package had stderr output: ros2_aruco
+```
+
+> **NOTE:** The `pytest-repeat egg-info` warning in stderr is harmless.
 
 ---
 
 ## Step 7: Configure Environment
 
-Add these lines to `~/.bashrc` so every new terminal is ready automatically:
-
 ```bash
 echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
-echo "source ~/aruco_ws/install/setup.bash" >> ~/.bashrc
+echo "source ~/your_ws/install/setup.bash" >> ~/.bashrc
 echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc
 echo "export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-> **NOTE:** `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` is important — without it, cross-terminal node discovery may not work reliably on Ubuntu 24.04.
-
----
-
-## Step 8: Create Camera Calibration File
-
-Without a calibration file, position and orientation will be all zeros. Create a basic calibration file for a 640x480 webcam:
+Verify the workspace is visible to ROS:
 
 ```bash
-mkdir -p ~/.ros/camera_info
-cat > ~/.ros/camera_info/default_cam.yaml << 'EOF'
-image_width: 640
-image_height: 480
-camera_name: default_cam
-camera_matrix:
-  rows: 3
-  cols: 3
-  data: [600, 0, 320, 0, 600, 240, 0, 0, 1]
-distortion_model: plumb_bob
-distortion_coefficients:
-  rows: 1
-  cols: 5
-  data: [0, 0, 0, 0, 0]
-rectification_matrix:
-  rows: 3
-  cols: 3
-  data: [1, 0, 0, 0, 1, 0, 0, 0, 1]
-projection_matrix:
-  rows: 3
-  cols: 4
-  data: [600, 0, 320, 0, 0, 600, 240, 0, 0, 0, 1, 0]
-EOF
+ros2 pkg list | grep aruco
+# Should show:
+# ros2_aruco
+# ros2_aruco_interfaces
 ```
 
-> **NOTE:** This is an approximate calibration. For accurate pose measurements, perform proper camera calibration using a printed checkerboard with `ros2 run camera_calibration cameracalibrator`.
+> **NOTE:** If migrating from a previous workspace, update the `source` line in `~/.bashrc` to point to the new workspace. Having two workspace source lines will cause conflicts.
 
 ---
 
-## Step 9: Create Launch File
+## Step 8: Create the RealSense + ArUco Launch File
 
-Create a single launch file that starts both the camera and ArUco detector together:
+> **IMPORTANT:** The `ros2_aruco` node uses **parameters** (not ROS remappings) for topic names. The `image_topic` and `camera_info_topic` parameters must be set explicitly to the RealSense topic paths. Using remappings in the launch file will not work.
+
+Write the launch file using Python to avoid heredoc formatting issues in the terminal:
 
 ```bash
-cat > ~/aruco_ws/src/ros2_aruco/ros2_aruco/launch/aruco_usb.launch.py << 'EOF'
-from launch import LaunchDescription
+python3 << 'EOF'
+content = '''from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+from launch.substitutions import PathJoinSubstitution
 
 def generate_launch_description():
-    return LaunchDescription([
-        Node(
-            package='usb_cam',
-            executable='usb_cam_node_exe',
-            name='usb_cam',
-            parameters=[{'video_device': '/dev/video0'}]
-        ),
-        Node(
-            package='ros2_aruco',
-            executable='aruco_node',
-            name='aruco_node',
-            parameters=[{
-                'marker_size': 0.03,
-                'aruco_dictionary_id': 'DICT_4X4_50'
-            }],
-            remappings=[
-                ('/camera/image_raw', '/image_raw'),
-                ('/camera/camera_info', '/camera_info')
-            ]
-        ),
-    ])
-EOF
+    realsense_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('realsense2_camera'),
+                'launch', 'rs_launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'enable_color':               'true',
+            'enable_depth':               'true',
+            'enable_infra1':              'true',
+            'enable_infra2':              'true',
+            'align_depth.enable':         'true',
+            'pointcloud.enable':          'true',
+            'enable_accel':               'true',
+            'enable_gyro':                'true',
+            'enable_sync':                'true',
+            'rgb_camera.color_profile':   '640x480x30',
+            'depth_module.depth_profile': '640x480x30',
+            'depth_module.infra_profile': '640x480x30',
+        }.items()
+    )
 
-cd ~/aruco_ws && colcon build --symlink-install
+    aruco_node = Node(
+        package='ros2_aruco',
+        executable='aruco_node',
+        name='aruco_node',
+        parameters=[{
+            'marker_size': 0.03,
+            'aruco_dictionary_id': 'DICT_4X4_50',
+            'image_topic': '/camera/camera/color/image_raw',
+            'camera_info_topic': '/camera/camera/color/camera_info',
+        }],
+    )
+
+    return LaunchDescription([realsense_launch, aruco_node])
+'''
+
+import os
+path = os.path.expanduser('~/your_ws/src/ros2_aruco/ros2_aruco/launch/aruco_realsense.launch.py')
+with open(path, 'w') as f:
+    f.write(content)
+print("Launch file written!")
+EOF
+```
+
+Rebuild to register the new launch file:
+
+```bash
+cd ~/your_ws && colcon build --symlink-install
+source ~/.bashrc
 ```
 
 ---
 
-## Step 10: Running the System
-
-Due to a cross-terminal ROS discovery issue on Ubuntu 24.04, run everything from a single terminal using background processes:
+## Step 9: Running the System
 
 ```bash
-# Kill any existing instances first
-pkill -f usb_cam_node_exe; pkill -f aruco_node; sleep 2
+# Kill any old instances first
+pkill -f realsense2_camera_node; pkill -f aruco_node; sleep 2
 
-# Launch camera + aruco detector in background
-ros2 launch ros2_aruco aruco_usb.launch.py &
+# Launch everything in background
+ros2 launch ros2_aruco aruco_realsense.launch.py &
 
-# Wait for nodes to start
-sleep 5
+# Wait for camera to initialise
+sleep 6
 
-# Echo detections (hold marker up to camera)
+# Echo ArUco detections — hold a marker up to the camera
 ros2 topic echo /aruco_markers
 ```
 
 ### To stop everything
 
-Press `Ctrl+\` (Ctrl + backslash), then:
+Press `Ctrl+C` to stop the echo, then:
 
 ```bash
-pkill -f usb_cam_node_exe
-pkill -f aruco_node
+pkill -f realsense2_camera_node; pkill -f aruco_node
 ```
 
 ---
 
-## Step 11: Expected Output
+## Step 10: Expected Output
 
 When a marker is detected you should see output like this:
 
 ```
 header:
   stamp:
-    sec: 1773011900
-    nanosec: 1046000
-  frame_id: default_cam
+    sec: 1773082767
+    nanosec: 695953125
+  frame_id: camera_color_optical_frame
 marker_ids:
-- 17
+- 3
 poses:
 - position:
-    x: -0.487  # meters left/right of camera center
-    y: 0.171   # meters up/down
-    z: 1.506   # meters distance from camera
+    x: 0.047030272209782405   # meters left/right of camera center
+    y: -0.03419500311922467   # meters up/down
+    z: 0.1557851034772402     # meters distance from camera
   orientation:
-    x: -0.906
-    y: -0.025
-    z: -0.174
-    w: 0.382
+    x: -0.5913555339610655
+    y: -0.4113294239905445
+    z: 0.5216795238336517
+    w: 0.4571183783506461
 ---
 ```
 
+Note that `frame_id` is `camera_color_optical_frame` — the real RealSense coordinate frame, not the placeholder `default_cam` used with the USB webcam setup.
+
 ---
 
-## Step 12: Generating ArUco Markers
+## Step 11: All Available Topics
+
+After launching, the following topics are available. Use `ros2 topic echo <topic>` on any of them.
+
+### ArUco Output
+| Topic | Type | Description |
+|---|---|---|
+| `/aruco_markers` | `ros2_aruco_interfaces/msg/ArucoMarkers` | Detected marker IDs + 6-DOF poses |
+| `/aruco_poses` | `geometry_msgs/msg/PoseArray` | Poses for use with TF / RViz |
+
+### Color (RGB)
+| Topic | Description |
+|---|---|
+| `/camera/camera/color/image_raw` | RGB image at 640x480x30 |
+| `/camera/camera/color/camera_info` | Real hardware intrinsics |
+| `/camera/camera/color/metadata` | Exposure, gain, white balance, etc. |
+| `/camera/camera/color/image_raw/compressed` | Compressed RGB |
+
+### Depth
+| Topic | Description |
+|---|---|
+| `/camera/camera/depth/image_rect_raw` | Raw depth image (16-bit Z16, mm units) |
+| `/camera/camera/depth/camera_info` | Depth stream intrinsics |
+| `/camera/camera/depth/metadata` | Depth stream metadata |
+| `/camera/camera/depth/color/points` | Colored XYZRGB point cloud |
+| `/camera/camera/aligned_depth_to_color/image_raw` | Depth aligned to color frame |
+| `/camera/camera/aligned_depth_to_color/camera_info` | Aligned depth intrinsics |
+
+### Infrared Stereo
+| Topic | Description |
+|---|---|
+| `/camera/camera/infra1/image_rect_raw` | Left IR image (Y8 grayscale) |
+| `/camera/camera/infra2/image_rect_raw` | Right IR image (Y8 grayscale) |
+| `/camera/camera/infra1/camera_info` | IR1 intrinsics |
+| `/camera/camera/infra2/camera_info` | IR2 intrinsics |
+| `/camera/camera/infra1/metadata` | IR1 metadata |
+| `/camera/camera/infra2/metadata` | IR2 metadata |
+| `/camera/camera/aligned_depth_to_infra1/image_raw` | Depth aligned to IR1 |
+| `/camera/camera/aligned_depth_to_infra2/image_raw` | Depth aligned to IR2 |
+
+### IMU (D435I only)
+| Topic | Description |
+|---|---|
+| `/camera/camera/accel/sample` | Accelerometer at 63Hz (MOTION_XYZ32F) |
+| `/camera/camera/gyro/sample` | Gyroscope at 200Hz (MOTION_XYZ32F) |
+| `/camera/camera/accel/imu_info` | Accelerometer intrinsics |
+| `/camera/camera/gyro/imu_info` | Gyroscope intrinsics |
+| `/camera/camera/accel/metadata` | Accelerometer metadata |
+| `/camera/camera/gyro/metadata` | Gyroscope metadata |
+
+### Extrinsics & TF
+| Topic | Description |
+|---|---|
+| `/camera/camera/extrinsics/depth_to_color` | Transform between depth and color sensors |
+| `/camera/camera/extrinsics/depth_to_infra1` | Transform between depth and IR1 |
+| `/camera/camera/extrinsics/depth_to_infra2` | Transform between depth and IR2 |
+| `/camera/camera/extrinsics/depth_to_accel` | Transform between depth and accelerometer |
+| `/camera/camera/extrinsics/depth_to_gyro` | Transform between depth and gyroscope |
+| `/tf_static` | All static transforms for RViz / navigation |
+
+---
+
+## Step 12: Useful Commands
+
+### Check all active topics
+```bash
+ros2 topic list
+```
+
+### Check topic publishing rate
+```bash
+ros2 topic hz /camera/camera/color/image_raw
+ros2 topic hz /camera/camera/depth/image_rect_raw
+ros2 topic hz /camera/camera/gyro/sample
+```
+
+### Echo IMU data
+```bash
+ros2 topic echo /camera/camera/accel/sample
+ros2 topic echo /camera/camera/gyro/sample
+```
+
+### Run RealSense camera standalone (no ArUco)
+```bash
+ros2 launch realsense2_camera rs_launch.py \
+  enable_color:=true \
+  enable_depth:=true \
+  align_depth.enable:=true \
+  pointcloud.enable:=true \
+  enable_accel:=true \
+  enable_gyro:=true \
+  enable_infra1:=true \
+  enable_infra2:=true \
+  enable_sync:=true \
+  rgb_camera.color_profile:=640x480x30 \
+  depth_module.depth_profile:=640x480x30 \
+  depth_module.infra_profile:=640x480x30
+```
+
+### Record all streams to a rosbag
+```bash
+ros2 bag record \
+  /camera/camera/color/image_raw \
+  /camera/camera/color/camera_info \
+  /camera/camera/depth/image_rect_raw \
+  /camera/camera/aligned_depth_to_color/image_raw \
+  /camera/camera/depth/color/points \
+  /camera/camera/infra1/image_rect_raw \
+  /camera/camera/infra2/image_rect_raw \
+  /camera/camera/accel/sample \
+  /camera/camera/gyro/sample \
+  /aruco_markers \
+  /tf_static \
+  -o realsense_aruco_recording
+```
+
+### Playback from a rosbag
+```bash
+ros2 bag play realsense_aruco_recording
+```
+
+### Visualize in RViz2
+```bash
+rviz2
+```
+
+Add these displays in RViz2:
+- **Image** → `/camera/camera/color/image_raw` — RGB feed
+- **Image** → `/camera/camera/aligned_depth_to_color/image_raw` — depth overlay
+- **PointCloud2** → `/camera/camera/depth/color/points` — 3D point cloud
+- **PoseArray** → `/aruco_poses` — ArUco marker poses in 3D
+- **TF** — all coordinate frames
+
+---
+
+## Step 13: Generating ArUco Markers
 
 ```bash
 # Generates marker_0001.png in current directory
 ros2 run ros2_aruco aruco_generate_marker --id 1 --size 200 --dictionary DICT_4X4_50
 
-# Open the generated image
 xdg-open marker_0001.png
 ```
 
-> **NOTE:** When printing, use 100% scale (do not scale to fit). Measure the printed black square side length in meters and use that as the `marker_size` parameter.
+> **NOTE:** When printing, use 100% scale (do not scale to fit). Measure the physical printed black square side length in meters and use that value as `marker_size` in the launch file. Even a few mm of error affects pose accuracy.
 
 ---
 
@@ -362,35 +571,57 @@ xdg-open marker_0001.png
 
 | Problem | Solution |
 |---|---|
-| `E: Unable to locate package ros-humble-*` | You are on Ubuntu 24.04 which requires `ros-jazzy-*`, not `ros-humble-*` |
-| `Conflicting values set for option Signed-By` | Remove both `ros2.list` AND `ros2.sources` from `/etc/apt/sources.list.d/` and re-add the repo |
-| Segmentation fault in `detectMarkers` | The apt `python3-opencv` is broken. Install `pip opencv-contrib-python==4.10.0.84` instead |
-| Position and orientation all zeros | Camera calibration file is missing. Create `~/.ros/camera_info/default_cam.yaml` |
-| `ros2 node list` returns empty | Run everything in one terminal using `&` for background processes. Set `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` |
-| `AttributeError: module cv2.aruco has no attribute X` | OpenCV API changed in 4.7+. Make sure the node patches from Step 5 were applied correctly |
-| `terminate called after throwing instance of char*` | Two `usb_cam` instances trying to open the same camera. Run `pkill -f usb_cam_node_exe` first |
-| numpy conflict errors | Do not mix pip and apt numpy. Use only apt `python3-numpy` for system numpy |
+| `rs-enumerate-devices` shows nothing | Camera not detected. Try `sudo apt install librealsense2-udev-rules` then unplug and replug |
+| `Usb Type Descriptor: 2.1` in enumerate output | Wrong USB port. Move to a USB 3.0 (blue) port |
+| `overflow video frame detected` / `Frame Corrupted` | USB bandwidth overflow — you are on USB 2.x. Switch to USB 3.0 port, or reduce streams/resolution |
+| `[realsense2_camera] Error: No device connected` | Unplug and replug. Confirm `rs-enumerate-devices` sees the camera first |
+| Depth image all black | `enable_depth:=true` not set, or camera too close (min range ~0.1m) |
+| Point cloud topic missing | Add `pointcloud.enable:=true` to launch args |
+| IMU topics missing | Add `enable_accel:=true enable_gyro:=true` to launch args |
+| `IMU Calibration is not available` warning | Benign — factory IMU calibration not stored on this unit. Default intrinsics used, IMU still works |
+| `get_xu(ctrl=1) failed! Device or resource busy` | Benign timing warning from the SDK — does not affect functionality |
+| ArUco node shows `/camera/image_raw` not RealSense topics | The node uses parameters not remappings. Set `image_topic` and `camera_info_topic` as parameters in the launch file |
+| `No camera info has been received!` on startup | Temporary — clears once first frame arrives. Not an error |
+| Segfault in `detectMarkers` | apt OpenCV is broken. Confirm pip `opencv-contrib-python==4.10.0.84` is installed and loading from `.local/lib` |
+| `ros2 node list` returns empty | Set `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` and run everything from one terminal |
+| Two camera instances conflict | Run `pkill -f realsense2_camera_node` before launching |
+
+---
+
+## Key Differences from USB Webcam Setup
+
+| Feature | USB Webcam | RealSense D435I |
+|---|---|---|
+| Driver package | `ros-jazzy-usb-cam` | `ros-jazzy-realsense2-camera` |
+| Launch file | `aruco_usb.launch.py` | `aruco_realsense.launch.py` |
+| Calibration | Fake YAML file required | Real intrinsics from hardware |
+| frame_id | `default_cam` | `camera_color_optical_frame` |
+| Depth data | None | Yes — aligned depth per pixel |
+| Point cloud | No | Yes |
+| IR stereo | No | Yes (infra1 + infra2) |
+| IMU | No | Yes (accel + gyro) |
+| Topic config | Remappings | Parameters (`image_topic`, `camera_info_topic`) |
+| Image topic | `/image_raw` | `/camera/camera/color/image_raw` |
+| Camera info topic | `/camera_info` | `/camera/camera/color/camera_info` |
 
 ---
 
 ## Important Notes
 
-- Always use `ros-jazzy-*` packages on Ubuntu 24.04, never `ros-humble-*`
-- The apt OpenCV 4.6 on Ubuntu 24.04 has a broken ArUco module — use pip OpenCV 4.10
-- The `sys.path.insert` patch in `aruco_node.py` ensures the pip OpenCV is loaded instead of the broken apt one
-- ROS cross-terminal node discovery is unreliable on Ubuntu 24.04 with default settings — always run from one terminal or set `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`
-- Camera calibration gives accurate 3D pose. The default calibration file is approximate
-- The `marker_size` parameter must match the physical size of the printed marker in meters
-- `DICT_4X4_50` and `DICT_5X5_250` are the most common dictionaries — make sure your markers and detector use the same one
+- Always use a **USB 3.0 or higher port** — USB 2.x will cause frame overflow and corruption with multiple streams enabled
+- The `ros2_aruco` node uses **parameters not ROS remappings** for topic names — set `image_topic` and `camera_info_topic` in the launch file parameters block
+- The apt OpenCV 4.6 on Ubuntu 24.04 has a broken ArUco module — always use pip OpenCV 4.10
+- The `sys.path.insert` patch in `aruco_node.py` ensures pip OpenCV loads instead of the broken apt version
+- `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` is required for reliable cross-terminal node discovery on Ubuntu 24.04
+- The `marker_size` parameter must match the physical printed marker size in meters
+- `DICT_4X4_50` and `DICT_5X5_250` are the most common dictionaries — markers and detector must use the same one
 
 ---
 
 ## Next Steps
 
-Now that ArUco detection is working, you can:
-
-- Perform proper camera calibration with a printed checkerboard for accurate pose measurements
-- Visualize marker poses in RViz2 by subscribing to the `/aruco_poses` topic
-- Use the `/aruco_markers` topic in your own ROS 2 nodes to drive robot behavior based on marker detection
-- Place markers in a known map for robot localization
-- Use multiple markers for robust detection from any angle (like an ArUco cube)
+- Use the aligned depth topic to get hardware-accurate 3D distance to each detected ArUco marker
+- Feed `/camera/camera/depth/color/points` into a SLAM package for simultaneous mapping and localization
+- Fuse the IMU (`accel` + `gyro`) with visual odometry for robust pose estimation in dynamic environments
+- Use the IR stereo pair for odometry in low-light or textureless environments
+- Record a rosbag of a full scene and replay it offline for development without needing the physical camera connected

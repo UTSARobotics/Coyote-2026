@@ -29,6 +29,8 @@ Version: 10/26/2020
 
 import sys
 sys.path.insert(0, '/home/prime/.local/lib/python3.12/site-packages')
+import sys
+sys.path.insert(0, '/home/prime/.local/lib/python3.12/site-packages')
 import rclpy
 import rclpy.node
 from rclpy.qos import qos_profile_sensor_data
