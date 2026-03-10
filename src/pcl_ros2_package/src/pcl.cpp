@@ -25,6 +25,9 @@ public:
     // Create a publisher for the centroids of obstacle clusters
     centroids_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("obstacle_centroids", 10);
 
+    // Create a publisher for debugging the cloud before clustering
+    debug_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("debug_cloud", 10);
+
     // Initialize previous ground plane coefficients
     previous_coefficients_.reset(new pcl::ModelCoefficients);
 
@@ -36,21 +39,24 @@ private:
     // Convert ROS2 PointCloud2 message to PCL point cloud
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::fromROSMsg(*msg, *cloud);
+    RCLCPP_INFO(this->get_logger(), "Input cloud size: %zu", cloud->size());
 
     // Apply voxel grid filtering to decimate the point cloud
     pcl::PointCloud<pcl::PointXYZ>::Ptr voxel_filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
     voxel_filter.setInputCloud(cloud);
-    voxel_filter.setLeafSize(0.03f, 0.03f, 0.03f); // Set the size of the voxel grid to 3 cm
+    voxel_filter.setLeafSize(0.05f, 0.05f, 0.05f); // 5 cm leaf size
     voxel_filter.filter(*voxel_filtered_cloud);
+    RCLCPP_INFO(this->get_logger(), "After voxel filter: %zu", voxel_filtered_cloud->size());
 
     // Apply statistical outlier removal filter
     pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
     sor.setInputCloud(voxel_filtered_cloud);
-    sor.setMeanK(50); // Number of nearest neighbors to consider
-    sor.setStddevMulThresh(1.0); // Standard deviation multiplier threshold
+    sor.setMeanK(20); // Number of nearest neighbors to consider
+    sor.setStddevMulThresh(0.5); // Standard deviation multiplier threshold
     sor.filter(*filtered_cloud);
+    RCLCPP_INFO(this->get_logger(), "After statistical outlier removal: %zu", filtered_cloud->size());
 
     // Segment the ground plane
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -59,8 +65,8 @@ private:
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(0.03); // Increased distance threshold for better ground plane detection
-    seg.setMaxIterations(3000); // Increased number of RANSAC iterations
+    seg.setDistanceThreshold(0.03); // Distance threshold for ground plane detection
+    seg.setMaxIterations(3000); // Number of RANSAC iterations
 
     seg.setInputCloud(filtered_cloud);
     seg.segment(*inliers, *coefficients);
@@ -85,6 +91,7 @@ private:
     extract.setIndices(inliers);
     extract.setNegative(true); // Extract the points that are not part of the ground plane
     extract.filter(*filtered_cloud);
+    RCLCPP_INFO(this->get_logger(), "Points after ground removal: %zu", filtered_cloud->size());
 
     // Publish all above-ground points
     sensor_msgs::msg::PointCloud2 above_ground_msg;
@@ -92,24 +99,32 @@ private:
     above_ground_msg.header = msg->header; // Copy the header from the input message
     above_ground_publisher_->publish(above_ground_msg);
 
+    // Publish the cloud for debugging before clustering
+    sensor_msgs::msg::PointCloud2 debug_msg;
+    pcl::toROSMsg(*filtered_cloud, debug_msg);
+    debug_msg.header = msg->header;
+    debug_publisher_->publish(debug_msg);
+
     // Creating the KdTree object for the search method of the extraction
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
     tree->setInputCloud(filtered_cloud);
 
     std::vector<pcl::PointIndices> cluster_indices;
     pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
-    ec.setClusterTolerance(0.05); // 5 cm
-    ec.setMinClusterSize(100);
+    ec.setClusterTolerance(0.1); // 10 cm
+    ec.setMinClusterSize(10); // Reduced minimum cluster size for testing
     ec.setMaxClusterSize(25000);
     ec.setSearchMethod(tree);
     ec.setInputCloud(filtered_cloud);
     ec.extract(cluster_indices);
+    RCLCPP_INFO(this->get_logger(), "Number of clusters found: %zu", cluster_indices.size());
 
     // Create a point cloud to store centroids
     pcl::PointCloud<pcl::PointXYZ>::Ptr centroids(new pcl::PointCloud<pcl::PointXYZ>);
 
     // Compute the centroid for each cluster
     for (const auto &cluster : cluster_indices) {
+      RCLCPP_INFO(this->get_logger(), "Cluster size: %zu", cluster.indices.size());
       pcl::PointXYZ centroid;
       centroid.x = 0;
       centroid.y = 0;
@@ -132,11 +147,13 @@ private:
 
     // Publish the centroids
     centroids_publisher_->publish(centroids_msg);
+    RCLCPP_INFO(this->get_logger(), "Published %zu centroids", centroids->size());
   }
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr above_ground_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr centroids_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr debug_publisher_; // Debug publisher
   pcl::ModelCoefficients::Ptr previous_coefficients_;
 };
 
@@ -146,5 +163,6 @@ int main(int argc, char * argv[]) {
   rclcpp::shutdown();
   return 0;
 }
+
 
 

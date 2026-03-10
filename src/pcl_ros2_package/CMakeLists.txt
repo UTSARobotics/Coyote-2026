@@ -11,16 +11,12 @@ find_package(rclcpp REQUIRED)
 find_package(PCL REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
-find_package(service_msgs REQUIRED)
-find_package(type_description_interfaces REQUIRED)
 
 include_directories(
   ${PCL_INCLUDE_DIRS}
   ${rclcpp_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
   ${pcl_conversions_INCLUDE_DIRS}
-  ${service_msgs_INCLUDE_DIRS}
-  ${type_description_interfaces_INCLUDE_DIRS}
 )
 
 link_directories(${PCL_LIBRARY_DIRS})
