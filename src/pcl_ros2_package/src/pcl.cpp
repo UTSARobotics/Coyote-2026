@@ -19,8 +19,11 @@ public:
     subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
       "/camera/camera/depth/color/points", 10, std::bind(&PclNode::pointCloudCallback, this, std::placeholders::_1));
 
-    // Create a publisher for the processed PointCloud2 data
-    publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("output_pointcloud", 10);
+    // Create a publisher for the processed PointCloud2 data (all above-ground points)
+    above_ground_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("above_ground_points", 10);
+
+    // Create a publisher for the centroids of obstacle clusters
+    centroids_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("obstacle_centroids", 10);
 
     // Initialize previous ground plane coefficients
     previous_coefficients_.reset(new pcl::ModelCoefficients);
@@ -83,6 +86,12 @@ private:
     extract.setNegative(true); // Extract the points that are not part of the ground plane
     extract.filter(*filtered_cloud);
 
+    // Publish all above-ground points
+    sensor_msgs::msg::PointCloud2 above_ground_msg;
+    pcl::toROSMsg(*filtered_cloud, above_ground_msg);
+    above_ground_msg.header = msg->header; // Copy the header from the input message
+    above_ground_publisher_->publish(above_ground_msg);
+
     // Creating the KdTree object for the search method of the extraction
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
     tree->setInputCloud(filtered_cloud);
@@ -117,16 +126,17 @@ private:
     }
 
     // Convert the centroids to ROS2 PointCloud2 message
-    sensor_msgs::msg::PointCloud2 output_msg;
-    pcl::toROSMsg(*centroids, output_msg);
-    output_msg.header = msg->header; // Copy the header from the input message
+    sensor_msgs::msg::PointCloud2 centroids_msg;
+    pcl::toROSMsg(*centroids, centroids_msg);
+    centroids_msg.header = msg->header; // Copy the header from the input message
 
     // Publish the centroids
-    publisher_->publish(output_msg);
+    centroids_publisher_->publish(centroids_msg);
   }
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr above_ground_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr centroids_publisher_;
   pcl::ModelCoefficients::Ptr previous_coefficients_;
 };
 
