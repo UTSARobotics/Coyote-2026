@@ -2,6 +2,7 @@
 
 ## Table of Contents
 - [Kira KV260 Initial Setup](#kira-kv260-initial-setup)
+- [System Startup Guide](#system-startup-guide)
 - [Realsense D345 Setup](#realsense-d345-setup)
 - [Motor Control Firmware](#motor-control-firmware)
 - [ArUco ROS2 Package](#aruco-ros2-package)
@@ -11,6 +12,58 @@
 ## Kira KV260 Initial Setup 
 
 Follow the instructions detailed here: https://xilinx.github.io/kria-apps-docs/kv260/2022.1/linux_boot/ubuntu_22_04/build/html/docs/sdcard.html
+
+## System Startup Guide
+
+Follow these steps to start the Coyote-2026 system with proper RealSense camera configuration:
+
+### 1. Launch RViz
+First, open RViz for visualization:
+```bash
+rviz2
+```
+
+### 2. Start RealSense Camera Node
+Launch the RealSense camera node in a new terminal:
+```bash
+ros2 run realsense2_camera realsense2_camera_node
+```
+
+### 3. Configure Camera Settings with rqt_reconfigure
+Open the dynamic reconfigure tool:
+```bash
+ros2 run rqt_reconfigure rqt_reconfigure
+```
+
+Configure the following settings:
+
+1. **Enable Decimation Filter**
+   - Set `enable_decimation_filter` to `True`
+   - Set `decimation_magnitude` to `8`
+
+2. **Enable PointCloud Neon**
+   - Set `enable_pointcloud_neon` to `True`
+
+3. **Camera Stream Configuration**
+   - Ensure only `color` and `depth` cameras are enabled
+   - Toggle them if they are already enabled to ensure proper initialization
+
+### 4. Verify System Status
+Check that all nodes are running and topics are publishing:
+```bash
+ros2 node list
+ros2 topic list
+```
+
+### 5. Start Additional Processing Nodes (Optional)
+If needed, launch additional processing nodes:
+```bash
+# Start ArUco detection
+ros2 run ros2_aruco aruco_node
+
+# Start PCL processing
+ros2 run pcl_ros2_package pcl_node
+```
 
 ## Realsense D345 Setup
 
